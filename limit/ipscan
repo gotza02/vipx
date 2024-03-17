@@ -1,0 +1,73 @@
+import sys
+import ipaddress
+import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
+import signal
+import os
+
+# Signal handler function
+def signal_handler(signal_received, frame):
+    print('\nReceived interrupt signal (Ctrl + C). Exiting gracefully...')
+    sys.exit(0)
+
+# Register the signal handler for SIGINT (Ctrl + C)
+signal.signal(signal.SIGINT, signal_handler)
+
+def is_valid_ip(ip: str) -> bool:
+    try:
+        ipaddress.ip_address(ip)
+        return True
+    except ValueError:
+        return False
+
+def ip_to_num(ip: str) -> int:
+    return int(ipaddress.ip_address(ip))
+
+def num_to_ip(num: int) -> str:
+    return str(ipaddress.ip_address(num))
+
+def scan_ips(start_ip: str, end_ip: str, output_file: str, concurrency: int, ping_timeout_ms: int):
+    start_num = ip_to_num(start_ip)
+    end_num = ip_to_num(end_ip)
+    if start_num > end_num:
+        raise ValueError("Start IP must be less than or equal to End IP.")
+
+    results = []
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = {executor.submit(ping_ip, num_to_ip(num), ping_timeout_ms): num for num in range(start_num, end_num + 1)}
+        for future in tqdm(as_completed(futures), total=end_num - start_num + 1, desc="Scanning IPs", unit="ip"):
+            result = future.result()
+            results.append(result)
+
+    up_results = [result for result in results if "UP" in result]
+
+    with open(output_file, 'w') as f_out:
+        for result in up_results:
+            f_out.write(result + '\n')
+
+    print(f"Scan partially/fully complete, UP results saved in {output_file}.")
+    print(f"Total 'UP' IPs found: {len(up_results)}")
+
+
+def main():
+    if len(sys.argv) < 4:
+        print("Usage: script.py start_ip end_ip output_file [concurrency] [ping_timeout_ms]")
+        sys.exit(1)
+
+    start_ip, end_ip, output_file = sys.argv[1:4]
+    concurrency = int(sys.argv[4]) if len(sys.argv) >= 5 else 10
+    ping_timeout_ms = int(sys.argv[5]) if len(sys.argv) == 6 else 1000  # Default timeout set to 1000ms (1 second)
+
+    if not is_valid_ip(start_ip) or not is_valid_ip(end_ip):
+        print("Invalid IP address format.")
+        sys.exit(1)
+
+    if concurrency <= 0 or ping_timeout_ms <= 0:
+        print("Concurrency and ping_timeout_ms must be positive integers.")
+        sys.exit(1)
+
+    scan_ips(start_ip, end_ip, output_file, concurrency, ping_timeout_ms)
+
+if __name__ == "__main__":
+    main()
